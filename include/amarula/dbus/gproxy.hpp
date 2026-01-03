@@ -181,9 +181,8 @@ class DBusProxy : public std::enable_shared_from_this<DBusProxy<Properties>> {
         : dbus_{dbus} {
         GError* err = nullptr;
 
-        proxy_ = g_dbus_proxy_new_sync(dbus_->connection(),
-                                       G_DBUS_PROXY_FLAGS_NONE, nullptr, name,
-                                       obj_path, interface_name, nullptr, &err);
+        proxy_ = g_dbus_proxy_new_for_bus_sync(G_BUS_TYPE_SYSTEM,G_DBUS_PROXY_FLAGS_NONE,nullptr, name,obj_path,interface_name,nullptr,&err);
+
         if (proxy_ == nullptr) {
             std::string const msg =
                 "Failed to create proxy: " + std::string(err->message);
