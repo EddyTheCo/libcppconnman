@@ -200,7 +200,7 @@ void Manager::setup_agent() {
 void Manager::setOfflineMode(bool offline_mode,
                              PropertiesSetCallback callback) {
     auto data = prepareCallback(std::move(callback));
-    setProperty(proxy(), OFFLINEMODE_STR,
+    setProperty(OFFLINEMODE_STR,
                 g_variant_new_boolean(static_cast<gboolean>(offline_mode)),
                 nullptr, &Manager::finishAsyncCall, data.release());
 }
@@ -277,12 +277,12 @@ void Manager::get_proxies_cb(GObject* proxy, GAsyncResult* res,
 }
 
 void Manager::get_technologies() {
-    callMethod(proxy(), nullptr, GETTECHNOLOGIES_STR, nullptr,
+    callMethod(nullptr, GETTECHNOLOGIES_STR, nullptr,
                &Manager::get_proxies_cb<Technology>, this);
 }
 
 void Manager::get_services() {
-    callMethod(proxy(), nullptr, GETSERVICES_STR, nullptr,
+    callMethod(nullptr, GETSERVICES_STR, nullptr,
                &Manager::get_proxies_cb<Service>, this);
 }
 
@@ -291,7 +291,7 @@ void Manager::registerAgent(const std::string& object_path,
     auto data = prepareCallback(std::move(callback));
     GVariant* child = g_variant_new_object_path(object_path.c_str());
     GVariant* parameters = g_variant_new_tuple(&child, 1);
-    callMethod(proxy(), nullptr, REGISTERAGENT_STR, parameters,
+    callMethod(nullptr, REGISTERAGENT_STR, parameters,
                &Manager::finishAsyncCall, data.release());
 }
 
@@ -300,7 +300,7 @@ void Manager::unregisterAgent(const std::string& object_path,
     auto data = prepareCallback(std::move(callback));
     GVariant* child = g_variant_new_object_path(object_path.c_str());
     GVariant* parameters = g_variant_new_tuple(&child, 1);
-    callMethod(proxy(), nullptr, UNREGISTERAGENT_STR, parameters,
+    callMethod(nullptr, UNREGISTERAGENT_STR, parameters,
                &Manager::finishAsyncCall, data.release());
 }
 
