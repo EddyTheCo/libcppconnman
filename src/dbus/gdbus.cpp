@@ -19,42 +19,20 @@ void DBus::onAnyAsyncDone() {
 
 void DBus::onAnyAsyncStart() { ++pending_calls_; }
 
-DBus::DBus(const std::string& bus_name, const std::string& object_path) {
-    GError* error = nullptr;
-    connection_ = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
-    if (connection_ == nullptr) {
-        std::string const msg = error->message;
-        g_clear_error(&error);
-        throw std::runtime_error("Failed to connect to DBus: " + msg);
+DBus::DBus(const std::string& bus_name, const std::string& object_path)
+    : ctx_{g_main_context_new()} {
+    glib_thread_ = std::thread([this]() {
+        GError* error = nullptr;
+        loop_ = g_main_loop_new(ctx_, FALSE);
+        g_main_context_invoke(ctx_, &DBus::on_loop_started, this);
+        g_main_loop_run(loop_);
+        g_main_loop_unref(loop_);
+        loop_ = nullptr;
+    });
+    {
+        std::unique_lock<std::mutex> lock(mtx_);
+        cv_.wait(lock, [this] { return running_; });
     }
-
-    GDBusProxy* proxy = g_dbus_proxy_new_sync(
-        connection_, G_DBUS_PROXY_FLAGS_NONE, nullptr, bus_name.c_str(),
-        object_path.c_str(), "org.freedesktop.DBus.Introspectable", nullptr,
-        &error);
-
-    if (proxy == nullptr) {
-        std::string const msg = error->message;
-        g_clear_error(&error);
-        throw std::runtime_error("Failed to create proxy for bus name: " + msg);
-    }
-
-    GVariant* result =
-        g_dbus_proxy_call_sync(proxy, "Introspect", nullptr,
-                               G_DBUS_CALL_FLAGS_NONE, -1, nullptr, &error);
-
-    g_object_unref(proxy);
-
-    if (result == nullptr) {
-        std::string const msg = error->message;
-        g_clear_error(&error);
-        throw std::runtime_error(
-            "Failed to introspect object path or interface: " +
-            std::string(msg));
-    }
-
-    g_variant_unref(result);
-    start();
 }
 
 DBus::~DBus() {
@@ -76,6 +54,7 @@ DBus::~DBus() {
     if (connection_ != nullptr) {
         g_object_unref(connection_);
     }
+    g_main_context_unref(ctx_);
 }
 
 auto DBus::on_loop_started(gpointer user_data) -> gboolean {
@@ -86,18 +65,6 @@ auto DBus::on_loop_started(gpointer user_data) -> gboolean {
     }
     self->cv_.notify_all();
     return G_SOURCE_REMOVE;  // run once
-}
-
-void DBus::start() {
-    if (!running_) {
-        glib_thread_ = std::thread([this]() {
-            loop_ = g_main_loop_new(nullptr, FALSE);
-            g_idle_add(&DBus::on_loop_started, this);
-            g_main_loop_run(loop_);
-            g_main_loop_unref(loop_);
-            loop_ = nullptr;
-        });
-    }
 }
 
 }  // namespace Amarula::DBus::G
