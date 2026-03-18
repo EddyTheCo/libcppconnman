@@ -37,6 +37,15 @@ class DBusProxy : public std::enable_shared_from_this<DBusProxy<Properties>> {
     Properties props_;
     PropertiesCallback on_property_changed_user_cb_{nullptr};
 
+    struct CallData {
+        GDBusProxy* proxy;
+        gchar* arg_name;
+        GVariant* parameters;
+        GCancellable* cancellable;
+        GAsyncReadyCallback callback;
+        gpointer user_data;
+    };
+
     void update_property(GVariant* prop) {
         GVariant* key_variant = g_variant_get_child_value(prop, 0);
         const gchar* key = g_variant_get_string(key_variant, nullptr);
@@ -87,6 +96,7 @@ class DBusProxy : public std::enable_shared_from_this<DBusProxy<Properties>> {
         std::unique_ptr<CallbackData> data(
             static_cast<CallbackData*>(user_data));
         auto self = data->getSelf();
+        g_assert(g_main_context_is_owner(self->dbus()->context()));
         const auto counter = data->getCounter();
         const auto success =
             finish(G_DBUS_PROXY(proxy), res, &error, &out_properties);
@@ -246,6 +256,22 @@ class DBusProxy : public std::enable_shared_from_this<DBusProxy<Properties>> {
         self->template executeCallBack<PropertiesSetCallback>(counter, success);
     }
 
+    static void call_data_cleanup_callback(GObject* source, GAsyncResult* res,
+                                           gpointer user_data) {
+        auto* data = static_cast<CallData*>(user_data);
+
+        if (data->callback) {
+            data->callback(source, res, data->user_data);
+        }
+
+        g_free(data->arg_name);
+        g_variant_unref(data->parameters);
+        if (data->cancellable) {
+            g_object_unref(data->cancellable);
+        }
+        delete data;
+    }
+
     void setProperty(const gchar* arg_name, GVariant* arg_value,
                      GCancellable* cancellable, GAsyncReadyCallback callback,
                      gpointer user_data
@@ -255,19 +281,36 @@ class DBusProxy : public std::enable_shared_from_this<DBusProxy<Properties>> {
             g_variant_new_string(arg_name), g_variant_new_variant(arg_value)};
 
         GVariant* parameters = g_variant_new_tuple(tuple_elements.data(), 2);
-        g_dbus_proxy_call(proxy_, "SetProperty", parameters,
-                          G_DBUS_CALL_FLAGS_NONE, -1, cancellable, callback,
-                          user_data);
+        callMethod(cancellable, "SetProperty", parameters, callback, user_data);
     }
 
     void callMethod(GCancellable* cancellable, const gchar* arg_name,
                     GVariant* parameters, GAsyncReadyCallback callback,
                     gpointer user_data) {
-        g_dbus_proxy_call(
-            proxy_, arg_name,
-            (parameters != nullptr) ? parameters
-                                    : g_variant_new_tuple(nullptr, 0),
-            G_DBUS_CALL_FLAGS_NONE, -1, cancellable, callback, user_data);
+        auto* data = new CallData{
+            proxy_,
+            g_strdup(arg_name),
+            (parameters != nullptr)
+                ? g_variant_ref_sink(parameters)
+                : g_variant_ref_sink(g_variant_new_tuple(nullptr, 0)),
+            (cancellable != nullptr) ? static_cast<GCancellable*> g_object_ref(
+                                           cancellable)
+                                     : nullptr,
+            callback,
+            user_data};
+
+        g_main_context_invoke(
+            dbus_->context(),
+            [](gpointer user_data) -> gboolean {
+                auto* data = static_cast<CallData*>(user_data);
+
+                g_dbus_proxy_call(data->proxy, data->arg_name, data->parameters,
+                                  G_DBUS_CALL_FLAGS_NONE, -1, data->cancellable,
+                                  call_data_cleanup_callback, data);
+
+                return G_SOURCE_REMOVE;
+            },
+            data);
     }
 };
 
