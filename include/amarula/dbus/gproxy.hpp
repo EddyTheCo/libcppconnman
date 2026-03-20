@@ -48,16 +48,36 @@ class DBusProxy : public std::enable_shared_from_this<DBusProxy<Properties>> {
         g_variant_unref(value);
     }
 
+    static auto on_properties_changed_invoke(gpointer user_data) -> gboolean {
+        auto* data = static_cast<CallData*>(user_data);
+        auto* self = static_cast<DBusProxy*>(data->user_data);
+
+        self->update_property(data->parameters);
+
+        if (self->on_property_changed_user_cb_) {
+            std::lock_guard<std::mutex> const lock(self->cb_mtx_);
+            self->on_property_changed_user_cb_(self->props_);
+        }
+
+        g_variant_unref(data->parameters);
+        delete data;
+
+        return G_SOURCE_REMOVE;
+    }
+
     static void on_properties_changed_cb(
         GDBusProxy* /*proxy*/, gchar* /*sender_name*/, gchar* /*signal_name*/,
         GVariant* parameters /*string name, variant value*/,
         gpointer user_data) {
         auto self = static_cast<DBusProxy*>(user_data);
-        self->update_property(parameters);
-        if (self->on_property_changed_user_cb_) {
-            std::lock_guard<std::mutex> const lock(self->cb_mtx_);
-            self->on_property_changed_user_cb_(self->props_);
-        }
+
+        GVariant* params_ref = g_variant_ref(parameters);
+
+        auto* data = new CallData{self->proxy_, nullptr, params_ref,
+                                  nullptr,      nullptr, self};
+
+        g_main_context_invoke(self->dbus_->context(),
+                              &DBusProxy::on_properties_changed_invoke, data);
     }
 
     static void get_property_cb(GObject* proxy, GAsyncResult* res,
