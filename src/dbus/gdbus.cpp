@@ -19,7 +19,7 @@ void DBus::onAnyAsyncDone() {
 
 void DBus::onAnyAsyncStart() { ++pending_calls_; }
 
-DBus::DBus(const std::string& bus_name, const std::string& object_path) {
+DBus::DBus(const std::string& bus_name, const std::string& object_path): ctx_{g_main_context_new()} {
     GError* error = nullptr;
     connection_ = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
     if (connection_ == nullptr) {
@@ -55,13 +55,13 @@ DBus::DBus(const std::string& bus_name, const std::string& object_path) {
 
     g_variant_unref(result);
     start();
-}
-
-DBus::~DBus() {
     {
         std::unique_lock<std::mutex> lock(mtx_);
         cv_.wait(lock, [this] { return running_; });
     }
+}
+
+DBus::~DBus() {
     {
         std::lock_guard<std::mutex> const lock(mtx_);
         running_ = false;
@@ -91,11 +91,13 @@ auto DBus::on_loop_started(gpointer user_data) -> gboolean {
 void DBus::start() {
     if (!running_) {
         glib_thread_ = std::thread([this]() {
-            loop_ = g_main_loop_new(nullptr, FALSE);
-            g_idle_add(&DBus::on_loop_started, this);
+            g_main_context_push_thread_default(ctx_);
+            loop_ = g_main_loop_new(ctx_, FALSE);
+            g_main_context_invoke(ctx_, &DBus::on_loop_started, this);
             g_main_loop_run(loop_);
             g_main_loop_unref(loop_);
             loop_ = nullptr;
+            g_main_context_unref(ctx_);
         });
     }
 }
